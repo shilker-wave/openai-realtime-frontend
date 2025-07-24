@@ -2,3 +2,5 @@
 
 Start with:
     npx serve
+
+## Not correctly working with Firefox!
