@@ -89,6 +89,7 @@ class RealtimeDemo {
         if (this.ws) {
             this.ws.close();
         }
+        this.stopAudioPlayback();
         this.stopContinuousCapture();
     }
     
@@ -137,7 +138,7 @@ class RealtimeDemo {
         try {
             this.stream = await navigator.mediaDevices.getUserMedia({ 
                 audio: {
-                    sampleRate: 24000,
+                    sampleRate: 24000, // This does nothing...
                     channelCount: 1,
                     echoCancellation: true,
                     noiseSuppression: true
@@ -152,6 +153,7 @@ class RealtimeDemo {
             this.processor = new AudioWorkletNode(this.audioContext, 'audio-processor');
             source.connect(this.processor);
             this.processor.connect(this.audioContext.destination);
+
             console.log('AudioContext sample rate:', this.audioContext.sampleRate);
 
             this.processor.port.onmessage = (event) => {

@@ -1,4 +1,3 @@
-// Testklasse, damit es auch in Firefox funktioniert. Hat aber andere Probleme gemacht.
 class AudioProcessor extends AudioWorkletProcessor {
   process(inputs, outputs, parameters) {
     const input = inputs[0];
