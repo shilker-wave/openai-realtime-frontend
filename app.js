@@ -153,16 +153,23 @@ class RealtimeDemo {
             this.processor = new AudioWorkletNode(this.audioContext, 'audio-processor');
             source.connect(this.processor);
             this.processor.connect(this.audioContext.destination);
-
-            console.log('AudioContext sample rate:', this.audioContext.sampleRate);
+            
+            const actualSampleRate = this.audioContext.sampleRate;
+            console.log('AudioContext sample rate:', actualSampleRate);
 
             this.processor.port.onmessage = (event) => {
+                let inputBuffer = event.data; // Float32Array at 48000 Hz (in Firefox)
+                
+                if (actualSampleRate !== 24000) {
+                    inputBuffer = downsampleBuffer(inputBuffer, actualSampleRate, 24000);
+                }
+
+                const int16Buffer = new Int16Array(inputBuffer.length);
+                for (let i = 0; i < inputBuffer.length; i++) {
+                    int16Buffer[i] = Math.max(-32768, Math.min(32767, inputBuffer[i] * 32768));
+                }
+
                 if (!this.isMuted && this.ws && this.ws.readyState === WebSocket.OPEN) {
-                    const inputBuffer = event.data;
-                    const int16Buffer = new Int16Array(inputBuffer.length);
-                    for (let i = 0; i < inputBuffer.length; i++) {
-                        int16Buffer[i] = Math.max(-32768, Math.min(32767, inputBuffer[i] * 32768));
-                    }
                     this.ws.send(JSON.stringify({
                         type: 'audio',
                         data: Array.from(int16Buffer)
@@ -467,6 +474,33 @@ class RealtimeDemo {
         console.log('Audio playback stopped and queue cleared');
     }
     
+    downsampleBuffer(buffer, inputSampleRate, outputSampleRate) {
+        if (outputSampleRate === inputSampleRate) {
+            return buffer;
+        }
+        const sampleRateRatio = inputSampleRate / outputSampleRate;
+        const newLength = Math.round(buffer.length / sampleRateRatio);
+        const result = new Float32Array(newLength);
+
+        let offsetResult = 0;
+        let offsetBuffer = 0;
+
+        while (offsetResult < result.length) {
+            const nextOffsetBuffer = Math.round((offsetResult + 1) * sampleRateRatio);
+            // Average the samples in between to downsample
+            let accum = 0, count = 0;
+            for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
+                accum += buffer[i];
+                count++;
+            }
+            result[offsetResult] = accum / count;
+            offsetResult++;
+            offsetBuffer = nextOffsetBuffer;
+        }
+
+        return result;
+}
+
     scrollToBottom() {
         this.messagesContent.scrollTop = this.messagesContent.scrollHeight;
     }
