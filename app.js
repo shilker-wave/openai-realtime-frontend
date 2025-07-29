@@ -138,14 +138,13 @@ class RealtimeDemo {
         try {
             this.stream = await navigator.mediaDevices.getUserMedia({ 
                 audio: {
-                    sampleRate: 24000, // This does nothing...
                     channelCount: 1,
                     echoCancellation: true,
                     noiseSuppression: true
                 } 
             });
             
-            this.audioContext = new AudioContext({ sampleRate: 24000 });
+            this.audioContext = new AudioContext();
             const source = this.audioContext.createMediaStreamSource(this.stream);
             
             // Create a script processor to capture audio data
@@ -156,13 +155,14 @@ class RealtimeDemo {
             
             const actualSampleRate = this.audioContext.sampleRate;
             console.log('AudioContext sample rate:', actualSampleRate);
+            this.ws.send(JSON.stringify({ type: 'sample_rate', rate: this.audioContext.sampleRate }));
 
             this.processor.port.onmessage = (event) => {
-                let inputBuffer = event.data; // Float32Array at 48000 Hz (in Firefox)
+                let inputBuffer = event.data;
                 
-                if (actualSampleRate !== 24000) {
-                    inputBuffer = downsampleBuffer(inputBuffer, actualSampleRate, 24000);
-                }
+                // if (actualSampleRate !== 24000) {
+                //     inputBuffer = downsampleBuffer(inputBuffer, actualSampleRate, 24000);
+                // }
 
                 const int16Buffer = new Int16Array(inputBuffer.length);
                 for (let i = 0; i < inputBuffer.length; i++) {
@@ -474,39 +474,13 @@ class RealtimeDemo {
         console.log('Audio playback stopped and queue cleared');
     }
     
-    downsampleBuffer(buffer, inputSampleRate, outputSampleRate) {
-        if (outputSampleRate === inputSampleRate) {
-            return buffer;
-        }
-        const sampleRateRatio = inputSampleRate / outputSampleRate;
-        const newLength = Math.round(buffer.length / sampleRateRatio);
-        const result = new Float32Array(newLength);
-
-        let offsetResult = 0;
-        let offsetBuffer = 0;
-
-        while (offsetResult < result.length) {
-            const nextOffsetBuffer = Math.round((offsetResult + 1) * sampleRateRatio);
-            // Average the samples in between to downsample
-            let accum = 0, count = 0;
-            for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
-                accum += buffer[i];
-                count++;
-            }
-            result[offsetResult] = accum / count;
-            offsetResult++;
-            offsetBuffer = nextOffsetBuffer;
-        }
-
-        return result;
-}
 
     scrollToBottom() {
         this.messagesContent.scrollTop = this.messagesContent.scrollHeight;
     }
 }
 
-// Initialize the demo when the page loads
+
 document.addEventListener('DOMContentLoaded', () => {
     new RealtimeDemo();
 });
