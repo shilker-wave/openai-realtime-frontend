@@ -1,3 +1,5 @@
+import { UIManager } from './uimanager.js';
+
 class RealtimeDemo {
     constructor() {
         this.ws = null;
@@ -14,44 +16,18 @@ class RealtimeDemo {
         this.isPlayingAudio = false;
         this.playbackAudioContext = null;
         this.currentAudioSource = null;
-        
-        this.initializeElements();
-        this.setupEventListeners();
-    }
-    
-    initializeElements() {
-        this.connectBtn = document.getElementById('connectBtn');
-        this.muteBtn = document.getElementById('muteBtn');
-        this.status = document.getElementById('status');
-        this.messagesContent = document.getElementById('messagesContent');
-        this.eventsContent = document.getElementById('eventsContent');
-        this.toolsContent = document.getElementById('toolsContent');
-    
-        // Show warning for Firefox users
-        if (navigator.userAgent.toLowerCase().includes('firefox')) {
-            const warning = document.createElement('div');
-            warning.style.color = 'red';
-            warning.style.fontWeight = 'bold';
-            warning.style.margin = '12px 0';
-            warning.textContent = '⚠️ Audio input is not supported in Firefox because of the fixed sample rate of mic input. Please use Chrome or Edge.';
-            document.body.insertBefore(warning, document.body.firstChild);
-    }
-    }
-    
-    setupEventListeners() {
-        this.connectBtn.addEventListener('click', () => {
-            if (this.isConnected) {
-                this.disconnect();
-            } else {
-                this.connect();
-            }
+
+        this.ui = new UIManager();
+        this.ui.onConnectClick(() => {
+            this.isConnected ? this.disconnect() : this.connect();
         });
-        
-        this.muteBtn.addEventListener('click', () => {
+        this.ui.onMuteClick(() => {
             this.toggleMute();
         });
     }
+
     
+
     generateSessionId() {
         return 'session_' + Math.random().toString(36).substr(2, 9);
     }
@@ -62,7 +38,7 @@ class RealtimeDemo {
             
             this.ws.onopen = () => {
                 this.isConnected = true;
-                this.updateConnectionUI();
+                this.ui.updateConnectionState(this.isConnected);
                 this.startContinuousCapture();
             };
             
@@ -73,7 +49,7 @@ class RealtimeDemo {
             
             this.ws.onclose = () => {
                 this.isConnected = false;
-                this.updateConnectionUI();
+                this.ui.updateConnectionState(this.isConnected);
             };
             
             this.ws.onerror = (error) => {
@@ -93,39 +69,12 @@ class RealtimeDemo {
         this.stopContinuousCapture();
     }
     
-    updateConnectionUI() {
-        if (this.isConnected) {
-            this.connectBtn.textContent = 'Disconnect';
-            this.connectBtn.className = 'connect-btn connected';
-            this.status.textContent = 'Connected';
-            this.status.className = 'status connected';
-            this.muteBtn.disabled = false;
-        } else {
-            this.connectBtn.textContent = 'Connect';
-            this.connectBtn.className = 'connect-btn disconnected';
-            this.status.textContent = 'Disconnected';
-            this.status.className = 'status disconnected';
-            this.muteBtn.disabled = true;
-        }
-    }
     
     toggleMute() {
         this.isMuted = !this.isMuted;
-        this.updateMuteUI();
+        this.ui.updateMuteState(this.isMuted, this.isCapturing);
     }
     
-    updateMuteUI() {
-        if (this.isMuted) {
-            this.muteBtn.textContent = '🔇 Mic Off';
-            this.muteBtn.className = 'mute-btn muted';
-        } else {
-            this.muteBtn.textContent = '🎤 Mic On';
-            this.muteBtn.className = 'mute-btn unmuted';
-            if (this.isCapturing) {
-                this.muteBtn.classList.add('active');
-            }
-        }
-    }
     
     async startContinuousCapture() {
         if (!this.isConnected || this.isCapturing) return;
@@ -178,7 +127,7 @@ class RealtimeDemo {
             };
             
             this.isCapturing = true;
-            this.updateMuteUI();
+            this.ui.updateMuteState(this.isMuted, this.isCapturing);
             
         } catch (error) {
             console.error('Failed to start audio capture:', error);
@@ -205,16 +154,16 @@ class RealtimeDemo {
             this.stream = null;
         }
         
-        this.updateMuteUI();
+        this.ui.updateMuteState(this.isMuted, this.isCapturing);
     }
     
     handleRealtimeEvent(event) {
         // Add to raw events pane
-        this.addRawEvent(event);
+        this.ui.addRawEvent(event);
         
         // Add to tools panel if it's a tool or handoff event
         if (event.type === 'tool_start' || event.type === 'tool_end' || event.type === 'handoff') {
-            this.addToolEvent(event);
+            this.ui.addToolEvent(event);
         }
         
         // Handle specific event types
@@ -236,7 +185,7 @@ class RealtimeDemo {
         console.log('updateMessagesFromHistory called with:', history);
         
         // Clear all existing messages
-        this.messagesContent.innerHTML = '';
+        this.ui.clearMessages();
         
         // Add messages from history
         if (history && Array.isArray(history)) {
@@ -268,7 +217,7 @@ class RealtimeDemo {
                     console.log(`Final content for ${role}:`, content);
                     
                     if (content.trim()) {
-                        this.addMessage(role, content.trim());
+                        this.ui.addMessage(role, content);
                         console.log(`Added message: ${role} - ${content.trim()}`);
                     }
                 } else {
@@ -279,90 +228,10 @@ class RealtimeDemo {
             console.log('History is not an array or is null/undefined');
         }
         
-        this.scrollToBottom();
+        this.ui.scrollMessagesToBottom();
     }
     
-    addMessage(type, content) {
-        const messageDiv = document.createElement('div');
-        messageDiv.className = `message ${type}`;
-        
-        const bubbleDiv = document.createElement('div');
-        bubbleDiv.className = 'message-bubble';
-        bubbleDiv.textContent = content;
-        
-        messageDiv.appendChild(bubbleDiv);
-        this.messagesContent.appendChild(messageDiv);
-        this.scrollToBottom();
-        
-        return messageDiv;
-    }
     
-    addRawEvent(event) {
-        const eventDiv = document.createElement('div');
-        eventDiv.className = 'event';
-        
-        const headerDiv = document.createElement('div');
-        headerDiv.className = 'event-header';
-        headerDiv.innerHTML = `
-            <span>${event.type}</span>
-            <span>▼</span>
-        `;
-        
-        const contentDiv = document.createElement('div');
-        contentDiv.className = 'event-content collapsed';
-        contentDiv.textContent = JSON.stringify(event, null, 2);
-        
-        headerDiv.addEventListener('click', () => {
-            const isCollapsed = contentDiv.classList.contains('collapsed');
-            contentDiv.classList.toggle('collapsed');
-            headerDiv.querySelector('span:last-child').textContent = isCollapsed ? '▲' : '▼';
-        });
-        
-        eventDiv.appendChild(headerDiv);
-        eventDiv.appendChild(contentDiv);
-        this.eventsContent.appendChild(eventDiv);
-        
-        // Auto-scroll events pane
-        this.eventsContent.scrollTop = this.eventsContent.scrollHeight;
-    }
-    
-    addToolEvent(event) {
-        const eventDiv = document.createElement('div');
-        eventDiv.className = 'event';
-        
-        let title = '';
-        let description = '';
-        let eventClass = '';
-        
-        if (event.type === 'handoff') {
-            title = `🔄 Handoff`;
-            description = `From ${event.from} to ${event.to}`;
-            eventClass = 'handoff';
-        } else if (event.type === 'tool_start') {
-            title = `🔧 Tool Started`;
-            description = `Running ${event.tool}`;
-            eventClass = 'tool';
-        } else if (event.type === 'tool_end') {
-            title = `✅ Tool Completed`;
-            description = `${event.tool}: ${event.output || 'No output'}`;
-            eventClass = 'tool';
-        }
-        
-        eventDiv.innerHTML = `
-            <div class="event-header ${eventClass}">
-                <div>
-                    <div style="font-weight: 600; margin-bottom: 2px;">${title}</div>
-                    <div style="font-size: 0.8rem; opacity: 0.8;">${description}</div>
-                </div>
-                <span style="font-size: 0.7rem; opacity: 0.6;">${new Date().toLocaleTimeString()}</span>
-            </div>
-        `;
-        
-        this.toolsContent.appendChild(eventDiv);
-        
-        // Auto-scroll tools pane
-        this.toolsContent.scrollTop = this.toolsContent.scrollHeight;
-    }
     
     async playAudio(audioBase64) {
         try {
@@ -474,10 +343,6 @@ class RealtimeDemo {
         console.log('Audio playback stopped and queue cleared');
     }
     
-
-    scrollToBottom() {
-        this.messagesContent.scrollTop = this.messagesContent.scrollHeight;
-    }
 }
 
 
