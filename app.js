@@ -1,5 +1,6 @@
 import { UIManager } from './ui-manager.js';
 import { WebSocketManager } from './websocket-manager.js';
+import { AudioCaptureManager } from './audio-capture-manager.js';
 
 class RealtimeDemo {
     constructor() {
@@ -16,6 +17,18 @@ class RealtimeDemo {
         this.isPlayingAudio = false;
         this.playbackAudioContext = null;
         this.currentAudioSource = null;
+
+        this.audioCapture = new AudioCaptureManager({
+            workletUrl: 'processor.js',
+            onAudioFrame: (buffer, rate) => {
+                if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                    this.ws.send(JSON.stringify({
+                        type: 'audio',
+                        data: Array.from(buffer),
+                    }));
+                }
+            }
+        });
 
         this.ui = new UIManager();
         this.ui.onConnectClick(() => {
@@ -68,88 +81,31 @@ class RealtimeDemo {
     
     toggleMute() {
         this.isMuted = !this.isMuted;
+        this.audioCapture.setMuted(this.isMuted);
         this.ui.updateMuteState(this.isMuted, this.isCapturing);
     }
     
     
     async startContinuousCapture() {
-        if (!this.isConnected || this.isCapturing) return;
-        
-        // Check if getUserMedia is available
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-            throw new Error('getUserMedia not available. Please use HTTPS or localhost.');
-        }
-        
         try {
-            this.stream = await navigator.mediaDevices.getUserMedia({ 
-                audio: {
-                    channelCount: 1,
-                    echoCancellation: true,
-                    noiseSuppression: true
-                } 
-            });
-            
-            this.audioContext = new AudioContext();
-            const source = this.audioContext.createMediaStreamSource(this.stream);
-            
-            // Create a script processor to capture audio data
-            await this.audioContext.audioWorklet.addModule('processor.js');
-            this.processor = new AudioWorkletNode(this.audioContext, 'audio-processor');
-            source.connect(this.processor);
-            this.processor.connect(this.audioContext.destination);
-            
-            const actualSampleRate = this.audioContext.sampleRate;
-            console.log('AudioContext sample rate:', actualSampleRate);
-            this.wsManager.send({ type: 'sample_rate', rate: this.audioContext.sampleRate });
+            await this.audioCapture.start();
 
-            this.processor.port.onmessage = (event) => {
-                let inputBuffer = event.data;
-                
-                // if (actualSampleRate !== 24000) {
-                //     inputBuffer = downsampleBuffer(inputBuffer, actualSampleRate, 24000);
-                // }
+            // Notify backend of sample rate
+            const rate = this.audioCapture.getSampleRate();
+            if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                this.ws.send(JSON.stringify({ type: 'sample_rate', rate }));
+            }
 
-                const int16Buffer = new Int16Array(inputBuffer.length);
-                for (let i = 0; i < inputBuffer.length; i++) {
-                    int16Buffer[i] = Math.max(-32768, Math.min(32767, inputBuffer[i] * 32768));
-                }
-
-                if (!this.isMuted && this.wsManager.isOpen()) {
-                    this.wsManager.send({
-                        type: 'audio',
-                        data: Array.from(int16Buffer)
-                    });
-                }
-            };
-            
             this.isCapturing = true;
             this.ui.updateMuteState(this.isMuted, this.isCapturing);
-            
         } catch (error) {
-            console.error('Failed to start audio capture:', error);
+            console.error('Audio capture error:', error);
         }
     }
     
     stopContinuousCapture() {
-        if (!this.isCapturing) return;
-        
+        this.audioCapture.stop();
         this.isCapturing = false;
-        
-        if (this.processor) {
-            this.processor.disconnect();
-            this.processor = null;
-        }
-        
-        if (this.audioContext) {
-            this.audioContext.close();
-            this.audioContext = null;
-        }
-        
-        if (this.stream) {
-            this.stream.getTracks().forEach(track => track.stop());
-            this.stream = null;
-        }
-        
         this.ui.updateMuteState(this.isMuted, this.isCapturing);
     }
     
