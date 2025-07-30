@@ -1,8 +1,8 @@
-import { UIManager } from './uimanager.js';
+import { UIManager } from './ui-manager.js';
+import { WebSocketManager } from './websocket-manager.js';
 
 class RealtimeDemo {
     constructor() {
-        this.ws = null;
         this.isConnected = false;
         this.isMuted = false;
         this.isCapturing = false;
@@ -24,9 +24,26 @@ class RealtimeDemo {
         this.ui.onMuteClick(() => {
             this.toggleMute();
         });
-    }
 
-    
+        this.wsManager = new WebSocketManager(this.sessionId, {
+            onOpen: () => {
+                this.isConnected = true;
+                this.ui.updateConnectionState(true);
+                this.startContinuousCapture();
+            },
+            onClose: () => {
+                this.isConnected = false;
+                this.ui.updateConnectionState(false);
+            },
+            onError: (err) => {
+                console.error('WebSocket error:', err);
+            },
+            onMessage: (data) => {
+                this.handleRealtimeEvent(data);
+            }
+        });
+
+    }
 
     generateSessionId() {
         return 'session_' + Math.random().toString(36).substr(2, 9);
@@ -34,40 +51,19 @@ class RealtimeDemo {
     
     async connect() {
         try {
-            this.ws = new WebSocket(`ws://localhost:8000/ws/${this.sessionId}`);
-            
-            this.ws.onopen = () => {
-                this.isConnected = true;
-                this.ui.updateConnectionState(this.isConnected);
-                this.startContinuousCapture();
-            };
-            
-            this.ws.onmessage = (event) => {
-                const data = JSON.parse(event.data);
-                this.handleRealtimeEvent(data);
-            };
-            
-            this.ws.onclose = () => {
-                this.isConnected = false;
-                this.ui.updateConnectionState(this.isConnected);
-            };
-            
-            this.ws.onerror = (error) => {
-                console.error('WebSocket error:', error);
-            };
-            
-        } catch (error) {
-            console.error('Failed to connect:', error);
+            await this.wsManager.connect();
+        } catch (err) {
+            console.error('Failed to connect:', err);
         }
     }
+
     
     disconnect() {
-        if (this.ws) {
-            this.ws.close();
-        }
+        this.wsManager.disconnect();
         this.stopAudioPlayback();
         this.stopContinuousCapture();
     }
+
     
     
     toggleMute() {
@@ -104,7 +100,7 @@ class RealtimeDemo {
             
             const actualSampleRate = this.audioContext.sampleRate;
             console.log('AudioContext sample rate:', actualSampleRate);
-            this.ws.send(JSON.stringify({ type: 'sample_rate', rate: this.audioContext.sampleRate }));
+            this.wsManager.send({ type: 'sample_rate', rate: this.audioContext.sampleRate });
 
             this.processor.port.onmessage = (event) => {
                 let inputBuffer = event.data;
@@ -118,11 +114,11 @@ class RealtimeDemo {
                     int16Buffer[i] = Math.max(-32768, Math.min(32767, inputBuffer[i] * 32768));
                 }
 
-                if (!this.isMuted && this.ws && this.ws.readyState === WebSocket.OPEN) {
-                    this.ws.send(JSON.stringify({
+                if (!this.isMuted && this.wsManager.isOpen()) {
+                    this.wsManager.send({
                         type: 'audio',
                         data: Array.from(int16Buffer)
-                    }));
+                    });
                 }
             };
             
