@@ -131,8 +131,6 @@ class RealtimeFrontend {
     
     updateMessagesFromHistory(history) {
         console.log('updateMessagesFromHistory called with:', history);
-        
-        // Clear all existing messages
         this.ui.clearMessages();
         
         // Add messages from history
