@@ -4,6 +4,7 @@ export class AudioPlayerManager {
         this.isPlaying = false;
         this.audioContext = null;
         this.currentSource = null;
+        this.nextPlaybackTime = null;
     }
 
     async play(audioBase64) {
@@ -36,6 +37,11 @@ export class AudioPlayerManager {
         // Initialize audio context if needed
         if (!this.audioContext) {
             this.audioContext = new AudioContext({ sampleRate: 24000 });
+        }
+
+         // Initialize nextPlaybackTime
+        if (!this.nextPlaybackTime) {
+            this.nextPlaybackTime = this.audioContext.currentTime;
         }
         
         while (this.audioQueue.length > 0) {
@@ -77,15 +83,16 @@ export class AudioPlayerManager {
                 const source = this.audioContext.createBufferSource();
                 source.buffer = audioBuffer;
                 source.connect(this.audioContext.destination);
-                
-                // Store reference to current source
                 this.currentSource = source;
+                
+                source.start(this.nextPlaybackTime);
+                this.nextPlaybackTime += audioBuffer.duration;
                 
                 source.onended = () => {
                     this.currentSource = null;
                     resolve();
                 };
-                source.start();
+                
                 
             } catch (error) {
                 console.error('Failed to play audio chunk:', error);
@@ -109,6 +116,7 @@ export class AudioPlayerManager {
         
         // Clear the audio queue
         this.audioQueue = [];
+        this.nextPlaybackTime = null
         
         // Reset playback state
         this.isPlaying = false;
