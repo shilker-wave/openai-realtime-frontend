@@ -1,31 +1,25 @@
 import { UIManager } from './ui-manager.js';
 import { WebSocketManager } from './websocket-manager.js';
 import { AudioCaptureManager } from './audio-capture-manager.js';
+import { AudioPlayerManager } from './audio-player-manager.js';
 
-class RealtimeDemo {
+class RealtimeFrontend {
     constructor() {
         this.isConnected = false;
         this.isMuted = false;
         this.isCapturing = false;
-        this.audioContext = null;
-        this.processor = null;
-        this.stream = null;
         this.sessionId = this.generateSessionId();
         
-        // Audio playback queue
-        this.audioQueue = [];
-        this.isPlayingAudio = false;
-        this.playbackAudioContext = null;
-        this.currentAudioSource = null;
+        this.audioPlayer = new AudioPlayerManager();
 
         this.audioCapture = new AudioCaptureManager({
             workletUrl: 'processor.js',
             onAudioFrame: (buffer, rate) => {
-                if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-                    this.ws.send(JSON.stringify({
+                if (this.wsManager.isOpen()) {
+                    this.wsManager.send({
                         type: 'audio',
                         data: Array.from(buffer),
-                    }));
+                    });
                 }
             }
         });
@@ -73,7 +67,7 @@ class RealtimeDemo {
     
     disconnect() {
         this.wsManager.disconnect();
-        this.stopAudioPlayback();
+        this.audioPlayer.stop();
         this.stopContinuousCapture();
     }
 
@@ -81,7 +75,7 @@ class RealtimeDemo {
     
     toggleMute() {
         this.isMuted = !this.isMuted;
-        this.audioCapture.setMuted(this.isMuted);
+        this.audioCapture.setMuted(this.isMuted)
         this.ui.updateMuteState(this.isMuted, this.isCapturing);
     }
     
@@ -92,8 +86,8 @@ class RealtimeDemo {
 
             // Notify backend of sample rate
             const rate = this.audioCapture.getSampleRate();
-            if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-                this.ws.send(JSON.stringify({ type: 'sample_rate', rate }));
+            if (this.wsManager.isOpen()) {
+                this.wsManager.send({ type: 'sample_rate', rate });
             }
 
             this.isCapturing = true;
@@ -102,13 +96,15 @@ class RealtimeDemo {
             console.error('Audio capture error:', error);
         }
     }
+
     
     stopContinuousCapture() {
         this.audioCapture.stop();
         this.isCapturing = false;
         this.ui.updateMuteState(this.isMuted, this.isCapturing);
     }
-    
+
+
     handleRealtimeEvent(event) {
         // Add to raw events pane
         this.ui.addRawEvent(event);
@@ -121,10 +117,10 @@ class RealtimeDemo {
         // Handle specific event types
         switch (event.type) {
             case 'audio':
-                this.playAudio(event.audio);
+                this.audioPlayer.play(event.audio);
                 break;
             case 'audio_interrupted':
-                this.stopAudioPlayback();
+                this.audioPlayer.stop();
                 break;
             case 'history_updated':
                 this.updateMessagesFromHistory(event.history);
@@ -183,121 +179,9 @@ class RealtimeDemo {
         this.ui.scrollMessagesToBottom();
     }
     
-    
-    
-    async playAudio(audioBase64) {
-        try {
-            if (!audioBase64 || audioBase64.length === 0) {
-                console.warn('Received empty audio data, skipping playback');
-                return;
-            }
-            
-            // Add to queue
-            this.audioQueue.push(audioBase64);
-            
-            // Start processing queue if not already playing
-            if (!this.isPlayingAudio) {
-                this.processAudioQueue();
-            }
-            
-        } catch (error) {
-            console.error('Failed to play audio:', error);
-        }
-    }
-    
-    async processAudioQueue() {
-        if (this.isPlayingAudio || this.audioQueue.length === 0) {
-            return;
-        }
-        
-        this.isPlayingAudio = true;
-        
-        // Initialize audio context if needed
-        if (!this.playbackAudioContext) {
-            this.playbackAudioContext = new AudioContext({ sampleRate: 24000 });
-        }
-        
-        while (this.audioQueue.length > 0) {
-            const audioBase64 = this.audioQueue.shift();
-            await this.playAudioChunk(audioBase64);
-        }
-        
-        this.isPlayingAudio = false;
-    }
-    
-    async playAudioChunk(audioBase64) {
-        return new Promise((resolve, reject) => {
-            try {
-                // Decode base64 to ArrayBuffer
-                const binaryString = atob(audioBase64);
-                const bytes = new Uint8Array(binaryString.length);
-                for (let i = 0; i < binaryString.length; i++) {
-                    bytes[i] = binaryString.charCodeAt(i);
-                }
-                
-                const int16Array = new Int16Array(bytes.buffer);
-                
-                if (int16Array.length === 0) {
-                    console.warn('Audio chunk has no samples, skipping');
-                    resolve();
-                    return;
-                }
-                
-                const float32Array = new Float32Array(int16Array.length);
-                
-                // Convert int16 to float32
-                for (let i = 0; i < int16Array.length; i++) {
-                    float32Array[i] = int16Array[i] / 32768.0;
-                }
-                
-                const audioBuffer = this.playbackAudioContext.createBuffer(1, float32Array.length, 24000);
-                audioBuffer.getChannelData(0).set(float32Array);
-                
-                const source = this.playbackAudioContext.createBufferSource();
-                source.buffer = audioBuffer;
-                source.connect(this.playbackAudioContext.destination);
-                
-                // Store reference to current source
-                this.currentAudioSource = source;
-                
-                source.onended = () => {
-                    this.currentAudioSource = null;
-                    resolve();
-                };
-                source.start();
-                
-            } catch (error) {
-                console.error('Failed to play audio chunk:', error);
-                reject(error);
-            }
-        });
-    }
-    
-    stopAudioPlayback() {
-        console.log('Stopping audio playback due to interruption');
-        
-        // Stop current audio source if playing
-        if (this.currentAudioSource) {
-            try {
-                this.currentAudioSource.stop();
-                this.currentAudioSource = null;
-            } catch (error) {
-                console.error('Error stopping audio source:', error);
-            }
-        }
-        
-        // Clear the audio queue
-        this.audioQueue = [];
-        
-        // Reset playback state
-        this.isPlayingAudio = false;
-        
-        console.log('Audio playback stopped and queue cleared');
-    }
-    
 }
 
 
 document.addEventListener('DOMContentLoaded', () => {
-    new RealtimeDemo();
+    new RealtimeFrontend();
 });
